@@ -1,5 +1,66 @@
 let Rx = require(`rx`)
 
+function isPlainObject(value) {
+  return value && value.constructor.prototype === Object.prototype
+}
+
+function flattenObject(target) {
+  let result = {}
+
+  function step(object, prev) {
+    Object.keys(object).forEach((key) => {
+      let value = object[key]
+      let newKey = prev ? prev + `.` + key : key
+
+      if (isPlainObject(value) && Object.keys(value).length) {
+        return step(value, newKey)
+      }
+
+      result[newKey] = value
+    })
+  }
+
+  step(target)
+
+  return result
+}
+
+function unflattenObject(target) {
+  let result = {}
+
+  if (!isPlainObject(target)) {
+    return target
+  }
+
+  function getkey(key) {
+    let parsedKey = Number(key)
+    return isNaN(parsedKey) || key.indexOf(`.`) !== -1 ? key : parsedKey
+  }
+
+  Object.keys(target).forEach((key) => {
+    let split = key.split(`.`)
+    let key1 = getkey(split.shift())
+    let key2 = getkey(split[0])
+    let recipient = result
+
+    while (typeof key2 !== `undefined`) {
+      if (!isPlainObject(recipient[key1])) {
+        recipient[key1] = {}
+      }
+
+      recipient = recipient[key1]
+      if (split.length > 0) {
+        key1 = getkey(split.shift())
+        key2 = getkey(split[0])
+      }
+    }
+
+    recipient[key1] = unflattenObject(target[key])
+  })
+
+  return result
+}
+
 function makeSinkProxies(drivers) {
   let sinkProxies = {}
   let keys = Object.keys(drivers)
@@ -89,12 +150,15 @@ function run(main, drivers) {
       `with at least one driver function declared as a property.`)
   }
 
-  let sinkProxies = makeSinkProxies(drivers)
-  let sources = callDrivers(drivers, sinkProxies)
-  let sinks = main(sources)
-  let subscription = replicateMany(sinks, sinkProxies).subscribe()
-  let sinksWithDispose = attachDisposeToSinks(sinks, subscription)
-  let sourcesWithDispose = attachDisposeToSources(sources)
+  let flatDrivers = flattenObject(drivers)
+  let sinkProxies = makeSinkProxies(flatDrivers)
+  let sources = callDrivers(flatDrivers, sinkProxies)
+  let flatSources = flattenObject(sources)
+  let sinks = main(unflattenObject(sources))
+  let flatSinks = flattenObject(sinks)
+  let subscription = replicateMany(flatSinks, sinkProxies).subscribe()
+  let sinksWithDispose = attachDisposeToSinks(flatSinks, subscription)
+  let sourcesWithDispose = attachDisposeToSources(flatSources)
   return {sources: sourcesWithDispose, sinks: sinksWithDispose}
 }
 
